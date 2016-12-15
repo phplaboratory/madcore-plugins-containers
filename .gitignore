@@ -1,0 +1,9 @@
+# Generated files
+/build/
+*.pyc
+# backups
+.*.swp
+.*.swo
+*.html
+*~
+.idea/
