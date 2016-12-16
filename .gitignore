@@ -1,0 +1,11 @@
+# Generated files
+/build/
+*.pyc
+# backups
+.*.swp
+.*.swo
+*.html
+*~
+.idea/
+.DS_Store
+.aws
