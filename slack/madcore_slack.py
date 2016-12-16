@@ -32,7 +32,6 @@ def parse_args():
     parser.add_argument('-p', '--payload', required=True, help='Slack API payload for specific action')
     parser.add_argument('-o', '--output_path', required=False, default='/opt/s3/slack',
                         help='Specify path to save output data')
-    parser.add_argument('-b', '--bucket', required=True, help='Specify S3 bucket name')
     parser.add_argument('-d', '--debug', default=False, action='store_true', help="Enable debug mode")
 
     return parser.parse_args()
@@ -54,7 +53,6 @@ class SlackApi(Base):
         self.token = self.get_token_from_file()
         self.slack = Slacker(self.token)
         self.payload = self.validate_payload()
-        self.s3_bucket_name = self.settings.bucket
         self.request = self.init_request()
 
     def get_token_from_file(self):
@@ -62,7 +60,7 @@ class SlackApi(Base):
 
         with open(self.settings.token_file, 'r') as f:
             return f.read()
-    
+
     def init_request(self):
         """Init requests with auth headers"""
 
@@ -88,7 +86,7 @@ class SlackApi(Base):
     def s3_sync(self):
         """Command to sync all the files to S3 bucket"""
 
-        cmd = 'aws s3 sync {} s3://{}'.format(self.settings.output_path, self.s3_bucket_name)
+        cmd = 'aws s3 sync {} s3://{}'.format(self.settings.output_path, self.payload['s3_bucket'])
         self.log("Run cmd: {}".format(cmd))
 
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, shell=True)
