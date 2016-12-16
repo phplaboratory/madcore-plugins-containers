@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
 
-python /opt/madcore_slack.py "$@"
+python /opt/plugins/slack/madcore_slack.py "$@"

@@ -29,7 +29,7 @@ def parse_args():
                         help='Slack API action to perform')
     parser.add_argument('-t', '--token', required=True, help='Slack API token')
     parser.add_argument('-p', '--payload', required=True, help='Slack API payload for specific action')
-    parser.add_argument('-o', '--output_path', required=False, default='/opt/slack_data',
+    parser.add_argument('-o', '--output_path', required=False, default='/opt/s3/slack',
                         help='Specify path to save output data')
     parser.add_argument('-b', '--bucket', required=True, help='Specify S3 bucket name')
     parser.add_argument('-d', '--debug', default=False, action='store_true', help="Enable debug mode")
