@@ -48,18 +48,24 @@ class Base(object):
 
 
 class SlackApi(Base):
+    NAME = 'slack'
+
     def __init__(self, settings):
         self.settings = settings
         self.token = self.get_token_from_file()
         self.slack = Slacker(self.token)
         self.payload = self.validate_payload()
         self.request = self.init_request()
+        # TODO@geo Find account name from slack API
+        self.account_name = 'madcore'
 
     def get_token_from_file(self):
         """Load token from file"""
 
         with open(self.settings.token_file, 'r') as f:
-            return f.read()
+            token = f.read().strip()
+
+        return token
 
     def init_request(self):
         """Init requests with auth headers"""
@@ -76,17 +82,23 @@ class SlackApi(Base):
 
         return json.loads(self.settings.payload)
 
-    def make_dirs(self, folder):
+    def make_dirs(self, *folders):
         """Create dirs if not exists"""
 
-        for p in [self.settings.output_path, os.path.join(self.settings.output_path, folder)]:
+        for p in [self.settings.output_path, os.path.join(self.settings.output_path, *folders)]:
             if not os.path.exists(p):
                 os.makedirs(p)
 
-    def s3_sync(self):
+    def s3_sync(self, channel_name):
         """Command to sync all the files to S3 bucket"""
 
-        cmd = 'aws s3 sync {} s3://{}'.format(self.settings.output_path, self.payload['s3_bucket'])
+        cmd = 'aws s3 sync {path} s3://{bucket_name}/plugins/{plugin_name}/{account_name}/{channel_name}'.format(
+            path=self.settings.output_path,
+            bucket_name=self.payload['s3_bucket'],
+            plugin_name=self.NAME,
+            account_name=self.account_name,
+            channel_name=channel_name
+        )
         self.log("Run cmd: {}".format(cmd))
 
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, shell=True)
@@ -101,11 +113,18 @@ class SlackApi(Base):
     def save_json(self, channel_name, messages_data, timestamp):
         """Save messages for a day into a file"""
 
-        self.make_dirs('history')
-
         dt = datetime.fromtimestamp(timestamp)
-        file_path = os.path.join(self.settings.output_path, 'history',
-                                 'madcore.{}.{}.json'.format(channel_name, dt.strftime("%Y-%m-%d")))
+
+        file_format = '{account_name}_{channel_name}_{date}.json'.format(
+            account_name=self.account_name,
+            channel_name=channel_name,
+            date=dt.strftime("%Y-%m-%d")
+        )
+        date_in_folder = dt.strftime("%Y-%m")
+        self.make_dirs(date_in_folder, 'messages')
+
+        file_path = os.path.join(self.settings.output_path, date_in_folder, 'messages', file_format)
+
         with codecs.open(file_path, 'w', encoding='utf-8') as f:
             f.write(json.dumps(messages_data, indent=4, ensure_ascii=False))
 
@@ -122,8 +141,8 @@ class SlackApi(Base):
         """Pull all messages from from a channel and sore in files by days"""
 
         self.log("Get history of channel: {}".format(self.payload['channel']))
-
-        channel_id = self.slack.channels.get_channel_id(self.payload['channel'])
+        channel_name = self.payload['channel']
+        channel_id = self.slack.channels.get_channel_id(channel_name)
         channel_info = self.slack.channels.info(channel_id).body
 
         if 'latest' not in channel_info['channel']:
@@ -151,37 +170,47 @@ class SlackApi(Base):
             if not messages:
                 self.log("  No messages. Maybe this day there were no messages, continue")
             else:
-                self.save_json(self.payload['channel'], messages, oldest)
+                self.save_json(channel_name, messages, oldest)
                 self.log("  Messages saved!")
-                self.save_slack_files(messages)
+                self.save_slack_files(channel_name, messages)
 
         # after all messages were processed, we can sync the result to s3
-        self.s3_sync()
+        self.s3_sync(channel_name)
 
-    def download_file(self, url, timestamp):
+    def download_file(self, url, timestamp, channel_name):
         """Download file url and appends it's datetime to it's name"""
 
-        self.make_dirs('files')
         dt = datetime.fromtimestamp(timestamp)
 
         response = self.request.get(url, stream=True)
 
-        file_path = os.path.join(self.settings.output_path, 'files', '{}_{}'.format(dt, os.path.basename(url)))
+        file_format = '{account_name}_{channel_name}_{date}_{file_name}.json'.format(
+            account_name=self.account_name,
+            channel_name=channel_name,
+            date=dt.strftime("%Y-%m-%d"),
+            file_name=os.path.basename(url)
+        )
+
+        date_in_folder = dt.strftime("%Y-%m")
+        self.make_dirs(date_in_folder, 'binaries')
+
+        file_path = os.path.join(self.settings.output_path, date_in_folder, 'binaries', file_format)
+
         with open(file_path, 'wb') as out_file:
             shutil.copyfileobj(response.raw, out_file)
         del response
 
         return file_path
 
-    def save_slack_files(self, messages):
+    def save_slack_files(self, channel_name, messages_data):
         """
         Process all the messages and download the files
         """
 
-        for message in messages:
+        for message in messages_data:
             if 'file' in message:
                 self.log("Download file: {}".format(message['file']['url_private_download']))
-                self.download_file(message['file']['url_private_download'], message['file']['timestamp'])
+                self.download_file(message['file']['url_private_download'], message['file']['timestamp'], channel_name)
 
     def get_channel_history_by_range(self, channel_id, latest, oldest, count=1000):
         """
