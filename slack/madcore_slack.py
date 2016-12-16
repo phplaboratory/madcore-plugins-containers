@@ -27,7 +27,8 @@ def parse_args():
 
     parser.add_argument('-a', '--action', required=True, choices=SLACK_ACTIONS,
                         help='Slack API action to perform')
-    parser.add_argument('-t', '--token', required=True, help='Slack API token')
+    parser.add_argument('-tf', '--token_file', required=False, default='/opt/secrets/slack/slack-token',
+                        help='Path to slack API token')
     parser.add_argument('-p', '--payload', required=True, help='Slack API payload for specific action')
     parser.add_argument('-o', '--output_path', required=False, default='/opt/s3/slack',
                         help='Specify path to save output data')
@@ -50,16 +51,23 @@ class Base(object):
 class SlackApi(Base):
     def __init__(self, settings):
         self.settings = settings
-        self.slack = Slacker(self.settings.token)
+        self.token = self.get_token_from_file()
+        self.slack = Slacker(self.token)
         self.payload = self.validate_payload()
         self.s3_bucket_name = self.settings.bucket
         self.request = self.init_request()
 
+    def get_token_from_file(self):
+        """Load token from file"""
+
+        with open(self.settings.token_file, 'r') as f:
+            return f.read()
+    
     def init_request(self):
         """Init requests with auth headers"""
 
         # we need to pass auth if we want to make request to
-        headers = {'Authorization': 'Bearer ' + self.settings.token}
+        headers = {'Authorization': 'Bearer ' + self.token}
         request = requests.Session()
         request.headers = headers
 
