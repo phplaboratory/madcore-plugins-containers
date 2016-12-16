@@ -2,15 +2,18 @@
 
 from __future__ import print_function, unicode_literals
 
-from slacker import Slacker
 import argparse
-import json
-import sys
-from pprint import pprint
-from datetime import timedelta, datetime
-import time
-import os
 import codecs
+import json
+import os
+import sys
+import time
+from datetime import timedelta, datetime
+from pprint import pprint
+from slacker import Slacker
+import requests
+import shutil
+import subprocess
 
 SLACK_ACTIONS = ['post_message', 'pull_messages']
 
@@ -26,45 +29,92 @@ def parse_args():
                         help='Slack API action to perform')
     parser.add_argument('-t', '--token', required=True, help='Slack API token')
     parser.add_argument('-p', '--payload', required=True, help='Slack API payload for specific action')
+    parser.add_argument('-o', '--output_path', required=False, default='/opt/slack_data',
+                        help='Specify path to save output data')
+    parser.add_argument('-b', '--bucket', required=True, help='Specify S3 bucket name')
     parser.add_argument('-d', '--debug', default=False, action='store_true', help="Enable debug mode")
-    parser.add_argument('-o', '--output_path', required=True, help='Specify path to save output data')
 
     return parser.parse_args()
 
 
-class SlackApi(object):
-    def __init__(self, settings):
-        self.settings = settings
-        self.slack = Slacker(self.settings.token)
-        self.payload = self.validate_payload()
-
-    def validate_payload(self):
-        return json.loads(self.settings.payload)
-
+class Base(object):
     def log(self, msg):
         print(msg)
 
     def logp(self, msg):
         pprint(msg)
 
-    def save(self, channel_name, data, timestamp):
-        if not os.path.exists(self.settings.output_path):
-            os.makedirs(self.settings.output_path)
+    pass
+
+
+class SlackApi(Base):
+    def __init__(self, settings):
+        self.settings = settings
+        self.slack = Slacker(self.settings.token)
+        self.payload = self.validate_payload()
+        self.s3_bucket_name = self.settings.bucket
+        self.request = self.init_request()
+
+    def init_request(self):
+        """Init requests with auth headers"""
+
+        # we need to pass auth if we want to make request to
+        headers = {'Authorization': 'Bearer ' + self.settings.token}
+        request = requests.Session()
+        request.headers = headers
+
+        return request
+
+    def validate_payload(self):
+        """Make sure that payload is json formated"""
+
+        return json.loads(self.settings.payload)
+
+    def make_dirs(self, folder):
+        """Create dirs if not exists"""
+
+        for p in [self.settings.output_path, os.path.join(self.settings.output_path, folder)]:
+            if not os.path.exists(p):
+                os.makedirs(p)
+
+    def s3_sync(self):
+        """Command to sync all the files to S3 bucket"""
+
+        cmd = 'aws s3 sync {} s3://{}'.format(self.settings.output_path, self.s3_bucket_name)
+        self.log("Run cmd: {}".format(cmd))
+
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, shell=True)
+        out, err = process.communicate()
+
+        if err:
+            self.log("    S3 SYNC ERROR: {}".format(err))
+        else:
+            self.log("    S3 SYNC OK")
+            self.log(out)
+
+    def save_json(self, channel_name, messages_data, timestamp):
+        """Save messages for a day into a file"""
+
+        self.make_dirs('history')
 
         dt = datetime.fromtimestamp(timestamp)
-        file_path = os.path.join(self.settings.output_path,
+        file_path = os.path.join(self.settings.output_path, 'history',
                                  'madcore.{}.{}.json'.format(channel_name, dt.strftime("%Y-%m-%d")))
         with codecs.open(file_path, 'w', encoding='utf-8') as f:
-            f.write(json.dumps(data, indent=4, ensure_ascii=False))
+            f.write(json.dumps(messages_data, indent=4, ensure_ascii=False))
 
         return file_path
 
     def post_message(self):
+        """Post a message to a channel"""
+
         r = self.slack.chat.post_message(self.payload['channel'], self.payload['text'], **self.payload.get('args', {}))
         self.log(r.body)
         return r
 
     def pull_messages(self):
+        """Pull all messages from from a channel and sore in files by days"""
+
         self.log("Get history of channel: {}".format(self.payload['channel']))
 
         channel_id = self.slack.channels.get_channel_id(self.payload['channel'])
@@ -95,15 +145,49 @@ class SlackApi(object):
             if not messages:
                 self.log("  No messages. Maybe this day there were no messages, continue")
             else:
-                self.save(self.payload['channel'], messages, oldest)
+                self.save_json(self.payload['channel'], messages, oldest)
                 self.log("  Messages saved!")
+                self.save_slack_files(messages)
 
-    def get_channel_history_by_range(self, channel_id, latest, oldest):
+        # after all messages were processed, we can sync the result to s3
+        self.s3_sync()
+
+    def download_file(self, url, timestamp):
+        """Download file url and appends it's datetime to it's name"""
+
+        self.make_dirs('files')
+        dt = datetime.fromtimestamp(timestamp)
+
+        response = self.request.get(url, stream=True)
+
+        file_path = os.path.join(self.settings.output_path, 'files', '{}_{}'.format(dt, os.path.basename(url)))
+        with open(file_path, 'wb') as out_file:
+            shutil.copyfileobj(response.raw, out_file)
+        del response
+
+        return file_path
+
+    def save_slack_files(self, messages):
+        """
+        Process all the messages and download the files
+        """
+
+        for message in messages:
+            if 'file' in message:
+                self.log("Download file: {}".format(message['file']['url_private_download']))
+                self.download_file(message['file']['url_private_download'], message['file']['timestamp'])
+
+    def get_channel_history_by_range(self, channel_id, latest, oldest, count=1000):
+        """
+        Get all messages from a channel from specific date ranges
+        in backward mode - first messages  are the latest one
+        """
+
         all_messages = []
         history = {'has_more': True}
         while history['has_more']:
             history = self.slack.channels.history(channel_id, latest, oldest, inclusive=True, unreads=True,
-                                                  count=1000).body
+                                                  count=count).body
             if history['messages']:
                 all_messages += history['messages']
                 latest = float(history['messages'][-1]['ts'])
@@ -113,6 +197,8 @@ class SlackApi(object):
         return all_messages
 
     def run(self):
+        """Entry point"""
+
         return getattr(self, self.settings.action)()
 
 
