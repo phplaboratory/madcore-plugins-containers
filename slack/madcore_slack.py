@@ -56,8 +56,7 @@ class SlackApi(Base):
         self.slack = Slacker(self.token)
         self.payload = self.validate_payload()
         self.request = self.init_request()
-        # TODO@geo Find account name from slack API
-        self.account_name = 'madcore'
+        self._team_domain = None
 
     def get_token_from_file(self):
         """Load token from file"""
@@ -89,14 +88,23 @@ class SlackApi(Base):
             if not os.path.exists(p):
                 os.makedirs(p)
 
+    @property
+    def team_domain(self):
+        if self._team_domain:
+            return self._team_domain
+
+        self._team_domain = self.slack.team.info().body['team']['domain']
+
+        return self._team_domain
+
     def s3_sync(self, channel_name):
         """Command to sync all the files to S3 bucket"""
 
-        cmd = 'aws s3 sync {path} s3://{bucket_name}/plugins/{plugin_name}/{account_name}/{channel_name}'.format(
+        cmd = 'aws s3 sync {path} s3://{bucket_name}/plugins/{plugin_name}/{team_domain}/{channel_name}'.format(
             path=self.settings.output_path,
             bucket_name=self.payload['s3_bucket'],
             plugin_name=self.NAME,
-            account_name=self.account_name,
+            team_domain=self.team_domain,
             channel_name=channel_name
         )
         self.log("Run cmd: {}".format(cmd))
@@ -115,8 +123,8 @@ class SlackApi(Base):
 
         dt = datetime.fromtimestamp(timestamp)
 
-        file_format = '{account_name}_{channel_name}_{date}.json'.format(
-            account_name=self.account_name,
+        file_format = '{team_domain}_{channel_name}_{date}.json'.format(
+            team_domain=self.team_domain,
             channel_name=channel_name,
             date=dt.strftime("%Y-%m-%d")
         )
@@ -184,8 +192,8 @@ class SlackApi(Base):
 
         response = self.request.get(url, stream=True)
 
-        file_format = '{account_name}_{channel_name}_{date}_{file_name}.json'.format(
-            account_name=self.account_name,
+        file_format = '{team_domain}_{channel_name}_{date}_{file_name}.json'.format(
+            team_domain=self.team_domain,
             channel_name=channel_name,
             date=dt.strftime("%Y-%m-%d"),
             file_name=os.path.basename(url)
