@@ -101,7 +101,7 @@ class SlackApi(Base):
         """Command to sync all the files to S3 bucket"""
 
         cmd = 'aws s3 sync {path} s3://{bucket_name}/plugins/{plugin_name}/{team_domain}/{channel_name}'.format(
-            path=self.settings.output_path,
+            path=os.path.join(self.settings.output_path, channel_name),
             bucket_name=self.payload['s3_bucket'],
             plugin_name=self.NAME,
             team_domain=self.team_domain,
@@ -129,9 +129,9 @@ class SlackApi(Base):
             date=dt.strftime("%Y-%m-%d")
         )
         date_in_folder = dt.strftime("%Y-%m")
-        self.make_dirs(date_in_folder, 'messages')
+        self.make_dirs(channel_name, date_in_folder, 'messages')
 
-        file_path = os.path.join(self.settings.output_path, date_in_folder, 'messages', file_format)
+        file_path = os.path.join(self.settings.output_path, channel_name, date_in_folder, 'messages', file_format)
 
         with codecs.open(file_path, 'w', encoding='utf-8') as f:
             f.write(json.dumps(messages_data, indent=4, ensure_ascii=False))
@@ -148,42 +148,47 @@ class SlackApi(Base):
     def pull_messages(self):
         """Pull all messages from from a channel and sore in files by days"""
 
-        self.log("Get history of channel: {}".format(self.payload['channel']))
-        channel_name = self.payload['channel']
-        channel_id = self.slack.channels.get_channel_id(channel_name)
-        channel_info = self.slack.channels.info(channel_id).body
+        if self.payload.get('all_channels', False):
+            channels = [c['name'] for c in self.slack.channels.list().body['channels']]
+        else:
+            channels = map(lambda s: s.strip(), self.payload['channels'].split(','))
 
-        if 'latest' not in channel_info['channel']:
-            self.log("Seems that there are no messages in channel: '{}'".format(channel_id))
-            self.logp(channel_info)
-            sys.exit(1)
+        for channel_name in channels:
+            self.log("Get history of channel: {}".format(channel_name))
+            channel_id = self.slack.channels.get_channel_id(channel_name)
+            channel_info = self.slack.channels.info(channel_id).body
 
-        latest = float(
-            channel_info['channel']['latest']['ts']) + 1.0  # we add 1 just to make sure we start from the first message
-        oldest = latest
-        first_day = True
+            if 'latest' not in channel_info['channel']:
+                self.log("Seems that there are no messages in channel: '{}'. Skip.".format(channel_name))
+                continue
 
-        while oldest > channel_info['channel']['created']:
-            latest = oldest
-            if first_day:
-                # this is the datetime for the end of the day
-                dt = datetime.fromtimestamp(latest).replace(hour=0, minute=0, second=0, microsecond=0)
-                oldest = time.mktime(dt.timetuple())
-                first_day = False
-            else:
-                oldest = latest - timedelta(days=1).total_seconds()
+            latest = float(
+                channel_info['channel']['latest'][
+                    'ts']) + 1.0  # we add 1 just to make sure we start from the first message
+            oldest = latest
+            first_day = True
 
-            self.log("Get messages for day: '{}'".format(datetime.fromtimestamp(oldest)))
-            messages = self.get_channel_history_by_range(channel_id, latest, oldest)
-            if not messages:
-                self.log("  No messages. Maybe this day there were no messages, continue")
-            else:
-                self.save_json(channel_name, messages, oldest)
-                self.log("  Messages saved!")
-                self.save_slack_files(channel_name, messages)
+            while oldest > channel_info['channel']['created']:
+                latest = oldest
+                if first_day:
+                    # this is the datetime for the end of the day
+                    dt = datetime.fromtimestamp(latest).replace(hour=0, minute=0, second=0, microsecond=0)
+                    oldest = time.mktime(dt.timetuple())
+                    first_day = False
+                else:
+                    oldest = latest - timedelta(days=1).total_seconds()
 
-        # after all messages were processed, we can sync the result to s3
-        self.s3_sync(channel_name)
+                self.log("Get messages for day: '{}'".format(datetime.fromtimestamp(oldest)))
+                messages = self.get_channel_history_by_range(channel_id, latest, oldest)
+                if not messages:
+                    self.log("  No messages. Maybe on this day there were no messages?, continue")
+                else:
+                    self.save_json(channel_name, messages, oldest)
+                    self.log("  Messages saved!")
+                    self.save_slack_files(channel_name, messages)
+
+            # after all messages were processed, we can sync the result to s3
+            self.s3_sync(channel_name)
 
     def download_file(self, url, timestamp, channel_name):
         """Download file url and appends it's datetime to it's name"""
@@ -200,9 +205,9 @@ class SlackApi(Base):
         )
 
         date_in_folder = dt.strftime("%Y-%m")
-        self.make_dirs(date_in_folder, 'binaries')
+        self.make_dirs(channel_name, date_in_folder, 'binaries')
 
-        file_path = os.path.join(self.settings.output_path, date_in_folder, 'binaries', file_format)
+        file_path = os.path.join(self.settings.output_path, channel_name, date_in_folder, 'binaries', file_format)
 
         with open(file_path, 'wb') as out_file:
             shutil.copyfileobj(response.raw, out_file)
