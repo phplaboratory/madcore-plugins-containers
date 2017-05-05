@@ -6,11 +6,10 @@ import json
 
 from base64 import b64encode
 
-#emails_path="/Users/polfilm/.mail/account/allmail/cur"
-emails_path="/home/taras/Worktable/projects/Madcore.Containers/data/.mail/account/allmail/cur/"
-elasticsearch_url = "http://localhost:9200"
 
-email_index = "polfilm-allmail"
+emails_path= os.getenv('EMAILS_PATH', "/var/mailgun-flanker")
+elasticsearch_url = os.getenv('ELASTICSEARCH', "http://localhost:9200")
+email_index = os.getenv('ELASTICSEARCH_INDEX', "mailgun-flanker")
 
 from elasticsearch import Elasticsearch
 es = Elasticsearch([elasticsearch_url])

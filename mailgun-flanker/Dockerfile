@@ -14,17 +14,17 @@ RUN pip install elasticsearch
 
 
 # Add requirements.txt
-RUN mkdir /opt/mailparser
-ADD 2es.py /opt/mailparser/2es.py
+RUN mkdir /opt/mailgun-flanker
+ADD 2es.py /opt/mailgun-flanker/2es.py
 
 
 # Set the default directory for our environment
-ENV HOME /opt/mailparser
+ENV HOME /opt/mailgun-flanker
 
-ENV EMAILS_PATH /var/maildata
+ENV EMAILS_PATH /var/mailgun-flanker
 ENV ELASTICSEARCH "http://localhost:9200"
-ENV ELASTICSEARCH_INDEX  "polfilm-allmail"
+ENV ELASTICSEARCH_INDEX  "mailgun-flanker"
 
-WORKDIR /opt/mailparser
+WORKDIR /opt/mailgun-flanker
 
-CMD /usr/bin/python2.7 /opt/mailparser/2es.py
+CMD /usr/bin/python2.7 /opt/mailgun-flanker/2es.py
