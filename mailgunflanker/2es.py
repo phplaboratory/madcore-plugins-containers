@@ -7,9 +7,9 @@ import json
 from base64 import b64encode
 
 
-emails_path= os.getenv('EMAILS_PATH', "/var/mailgun-flanker")
+emails_path= os.getenv('EMAILS_PATH', "/var/mailgunflanker")
 elasticsearch_url = os.getenv('ELASTICSEARCH', "http://localhost:9200")
-email_index = os.getenv('ELASTICSEARCH_INDEX', "mailgun-flanker")
+email_index = os.getenv('ELASTICSEARCH_INDEX', "mailgunflanker")
 
 from elasticsearch import Elasticsearch
 es = Elasticsearch([elasticsearch_url])
